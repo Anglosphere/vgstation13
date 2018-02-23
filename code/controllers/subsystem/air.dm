@@ -2,8 +2,9 @@
 #define SSAIR_DEFERRED  2
 #define SSAIR_EDGES     3
 //#define SSAIR_FIRE_ZONE 4 //This involves behavior to be added in a future PR.
-#define SSAIR_HOTSPOT   4 //These two should each be increased by one once that one is uncommented.
-#define SSAIR_ZONE      5 //These two should each be increased by one once that one is uncommented.
+#define SSAIR_WINDOWS	4
+#define SSAIR_HOTSPOT   5 //These two should each be increased by one once that one is uncommented.
+#define SSAIR_ZONE      6 //These two should each be increased by one once that one is uncommented.
 
 #define SSAIR_FIRST_PART SSAIR_TILES //The first part to be processed.
 #define SSAIR_LAST_PART  SSAIR_ZONE  //The last part to be processed.
@@ -75,6 +76,7 @@ Class Procs:
 	                           SSAIR_DEFERRED  = 0,\
 	                           SSAIR_EDGES     = 0,\
 /*	                           SSAIR_FIRE_ZONE = 0,*/\
+	                           SSAIR_WINDOWS   = 0,\
 	                           SSAIR_HOTSPOT   = 0,\
 	                           SSAIR_ZONE      = 0)
 
@@ -86,6 +88,7 @@ Class Procs:
 	                                 SSAIR_DEFERRED  = list(),\
 	                                 SSAIR_EDGES     = list(),\
 /*	                                 SSAIR_FIRE_ZONE = list(),*/\
+                                     SSAIR_WINDOWS   = list(),\
 	                                 SSAIR_HOTSPOT   = list(),\
 	                                 SSAIR_ZONE      = list())
 
@@ -96,6 +99,10 @@ Class Procs:
 	var/failed_ticks = 0 //How many ticks have runtimed?
 
 	var/next_id = 1 //Used to keep track of zone UIDs.
+
+	var/init_done = 0
+
+	var/list/window_connection/global_window_connections = list()
 
 
 
@@ -116,6 +123,7 @@ Class Procs:
 	        E:[round(cost_parts[SSAIR_EDGES], 1)]|\
 "/*	        F:[round(cost_parts[SSAIR_FIRE_ZONE], 1)]|*/+"\
 	        H:[round(cost_parts[SSAIR_HOTSPOT], 1)]|\
+	        W:[round(cost_parts[SSAIR_WINDOWS], 1)]|\
 	        Z:[round(cost_parts[SSAIR_ZONE], 1)]|\
 	        } T:{\
 	        Z:[zones.len]|\
@@ -126,6 +134,7 @@ Class Procs:
 "/*	        F:[p_fire_zone.len]|*/+"\
 	        H:[p_hotspot.len]|\
 	        E:[p_edges.len]|\
+			W:[global_window_connections.len]|\
 	        A:[active_zones]"
 	..(msg) //Note to self: Don't fuck that up when uncommenting after adding fire zones
 
@@ -149,6 +158,81 @@ Total Zones: [zones.len]
 Total Edges: [edges.len]
 Total Active Edges: [length(processing_parts[SSAIR_EDGES]) ? "<span class='danger'>[length(processing_parts[SSAIR_EDGES])]</span>" : "None"]
 Total Unsimulated Turfs: [world.maxx*world.maxy*world.maxz - simulated_turf_count]</span>"})
+
+	for(var/zone/Z in zones)
+		for(var/turf/simulated/T in Z.contents)
+			var/list/tempwin_turf = list()
+			var/list/tempwin_nextturf = list()
+
+			for(var/obj/structure/window/w in T.contents)
+				tempwin_turf |= w
+			Z.windows |= tempwin_turf
+			for(var/D in cardinal)
+				var/turf/simulated/NT = get_step(T,D)
+				if(istype(NT) && NT.zone && NT.zone != Z)
+					var/zone/NZ = NT.zone
+					var/found_border_zone = 0
+					if(NZ.window_connections && NZ.window_connections.len)
+						for(var/window_connection/wc in NZ.window_connections)
+							if(Z in wc.bordering_zones)
+								found_border_zone = 1
+								for(var/obj/structure/window/w in tempwin_turf)
+									if((get_dir(w.loc, NT) == w.dir) && w.loc != NT)
+										wc.shared_windows |= w
+										world.log << "SSAIR adding \ref[w] to \ref[wc] because direction \ref[NT] NT [get_dir(w.loc, NT)] matches window dir [w.dir]"
+									else
+										world.log << "SSAIR skipping \ref[w] to \ref[wc] list because direction to \ref[NT] NT [get_dir(w.loc, NT)] does not match window dir [w.dir]"
+								Z.window_connections |= wc
+								//world.log << "SUBSYSTEM INIT FOUND zone [Z] in zone [NZ] window connection [wc] merging window list."
+						for(var/window_connection/wc in Z.window_connections)
+							if(NZ in wc.bordering_zones)
+								found_border_zone = 1
+								for(var/obj/structure/window/w in NT.contents)
+									if((get_dir(w.loc, T) == w.dir) && w.loc != NT)
+										wc.shared_windows |= w
+										world.log << "SSAIR adding \ref[w] to \ref[wc] because direction \ref[T] T [get_dir(w.loc, T)] matches window dir [w.dir]"
+									else
+										world.log << "SSAIR skipping \ref[w] to \ref[wc] list because direction to \ref[T] T [get_dir(w.loc, T)] does not match window dir [w.dir]"
+
+								NZ.window_connections |= wc
+								//world.log << "SUBSYSTEM INIT FOUND zone [Z] in zone [NZ] window connection [wc] merging window list."
+					if(!found_border_zone) //make a new window connection if there are windows guess
+						for(var/obj/structure/window/w in NT.contents)
+							if((get_dir(w.loc, T) == w.dir) && w.loc != T)
+								tempwin_nextturf |= w
+								world.log << "SSAIR adding \ref[w] to tempwin_nextturf list because direction \ref[T] T [get_dir(w.loc, T)] matches window dir [w.dir]"
+						if(tempwin_turf.len || tempwin_nextturf.len)
+
+							var/window_connection/wc = new()
+							
+							for(var/obj/structure/window/w in tempwin_nextturf)
+								if((get_dir(w.loc, T) == w.dir) && w.loc != T)
+									world.log << "SSAIR adding \ref[w] to \ref[wc] list because direction to \ref[T] T [get_dir(w.loc, T)] matches window dir [w.dir]"
+									wc.shared_windows |= w
+								else
+									world.log << "SSAIR skipping \ref[w] to \ref[wc] list because direction to \ref[T] T [get_dir(w.loc, T)] does not match window dir [w.dir]"
+
+							for(var/obj/structure/window/w in tempwin_turf)
+								if((get_dir(w.loc, NT) == w.dir) && w.loc != NT)
+									world.log << "SSAIR adding \ref[w] to \ref[wc] list because direction to \ref[NT] NT [get_dir(w.loc, NT)] matches window dir [w.dir]"
+									wc.shared_windows |= w
+								else
+									world.log << "SSAIR skipping \ref[w] to \ref[wc] list because direction to \ref[NT] NT [get_dir(w.loc, NT)] does not match window dir [w.dir]"
+							wc.bordering_zones.Add(Z, NZ)
+							Z.window_connections += wc
+							NZ.window_connections += wc
+							global_window_connections += wc
+							world.log << "SUBSYSTEM INIT ADDING NEW  \ref[wc] WINDOW CONNECTION FOR [Z] [NZ]"
+							for(var/thing in Z.window_connections)
+								world.log << "\ref[thing]"
+							for(var/thing in NZ.window_connections)
+								world.log << "\ref[thing]"
+					tempwin_nextturf.len = 0
+				else
+					continue
+
+
+	init_done = 1
 
 	..()
 
@@ -222,6 +306,10 @@ Total Unsimulated Turfs: [world.maxx*world.maxy*world.maxz - simulated_turf_coun
 //		if(SSAIR_FIRE_ZONE)
 //			LOOP_DECLARATION(zone, Z)
 //				Z.process_fire()
+
+		if(SSAIR_WINDOWS)
+			for(var/window_connection/wc in global_window_connections)
+				wc.process_differential()
 
 		if(SSAIR_HOTSPOT)
 			LOOP_DECLARATION(obj/effect/fire, fire)

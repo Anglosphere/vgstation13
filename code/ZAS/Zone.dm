@@ -44,6 +44,8 @@ Class Procs:
 	var/needs_update = 0
 	var/list/edges = list()
 	var/datum/gas_mixture/air = new
+	var/list/obj/structure/window/windows = list()
+	var/list/window_connections = list()
 
 /zone/New()
 	SSair.add_zone(src)
@@ -63,6 +65,73 @@ Class Procs:
 	T.zone = src
 	contents.Add(T)
 	T.set_graphic(air.graphics)
+	if(SSair.init_done)
+		var/list/tempwin_turf = list()
+		var/list/tempwin_nextturf = list()
+
+		for(var/obj/structure/window/w in T.contents)
+			tempwin_turf |= w
+		windows |= tempwin_turf
+		for(var/D in cardinal)
+			var/turf/simulated/NT = get_step(T,D)
+			if(istype(NT) && NT.zone && NT.zone != src)
+				var/zone/NZ = NT.zone
+				var/found_border_zone = 0
+				if(NZ.window_connections && NZ.window_connections.len)
+
+					for(var/window_connection/wc in NZ.window_connections)
+						if(src in wc.bordering_zones)
+							found_border_zone = 1
+							for(var/obj/structure/window/w in tempwin_turf)
+								if((get_dir(w.loc, T) == w.dir )&& w.loc != T)
+									wc.shared_windows |= w
+									world.log << "TURFTURFTURF adding \ref[w] to \ref[wc] because direction \ref[T] T [get_dir(w.loc, T)] matches window dir [w.dir]"
+								else
+									world.log << "TURFTURFTURF skipping \ref[w] to \ref[wc] list because direction to \ref[T] T [get_dir(w.loc, T)] does not match window dir [w.dir]"
+							src.window_connections |= wc
+							//world.log << "SUBSYSTEM INIT FOUND zone [src] in zone [NZ] window connection [wc] merging window list."
+					for(var/window_connection/wc in src.window_connections)
+						if(NZ in wc.bordering_zones)
+							found_border_zone = 1
+							for(var/obj/structure/window/w in NT.contents)
+								if((get_dir(w.loc, NT) == w.dir) && w.loc != NT )
+									wc.shared_windows |= w
+									world.log << "TURFTURFTURF adding \ref[w] to \ref[wc] because direction \ref[NT] NT [get_dir(w.loc, T)] matches window dir [w.dir]"
+								else
+									world.log << "TURFTURFTURF skipping \ref[w] to \ref[wc] list because direction to \ref[NT] NT [get_dir(w.loc, NT)] does not match window dir [w.dir]"
+
+							NZ.window_connections |= wc
+							//world.log << "SUBSYSTEM INIT FOUND zone [src] in zone [NZ] window connection [wc] merging window list."
+				if(!found_border_zone) //make a new window connection if there are windows
+					for(var/obj/structure/window/w in NT.contents)
+						if((get_dir(w.loc, T) == w.dir) && w.loc != T)
+							tempwin_nextturf |= w
+							world.log << "TURFTURFTURF adding \ref[w] to tempwin_nextturf list because direction \ref[T] T [get_dir(w.loc, T)] matches window dir [w.dir]"
+					if(tempwin_turf.len || tempwin_nextturf.len)
+
+						var/window_connection/wc = new()
+
+						for(var/obj/structure/window/w in tempwin_nextturf)
+							if((get_dir(w.loc, T) == w.dir) && w.loc != T)
+								world.log << "TURFTURFTURF adding \ref[w] to \ref[wc] list because direction to \ref[T] T [get_dir(w.loc, T)] matches window dir [w.dir]"
+								wc.shared_windows |= w
+							else
+								world.log << "TURFTURFTURF skipping \ref[w] to \ref[wc] list because direction to \ref[T] T [get_dir(w.loc, T)] does not match window dir [w.dir]"
+
+						for(var/obj/structure/window/w in tempwin_turf)
+							if((get_dir(w.loc, NT) == w.dir) && w.loc != T)
+								world.log << "TURFTURFTURF adding \ref[w] to \ref[wc] list because direction to \ref[NT] NT [get_dir(w.loc, NT)] matches window dir [w.dir]"
+								wc.shared_windows |= w
+							else
+								world.log << "TURFTURFTURF skipping \ref[w] to \ref[wc] list because direction to \ref[NT] NT [get_dir(w.loc, NT)] does not match window dir [w.dir]"
+						wc.bordering_zones.Add(src, NZ)
+						src.window_connections += wc
+						NZ.window_connections += wc
+						SSair.global_window_connections += wc
+				tempwin_nextturf.len = 0
+			else
+				continue
+
 
 /zone/proc/remove(turf/simulated/T)
 #ifdef ZASDBG
@@ -89,6 +158,22 @@ Class Procs:
 	ASSERT(!into.invalid)
 #endif
 	c_invalidate()
+	if(SSair.init_done)
+		for(var/window_connection/wc in window_connections)
+			if(into in wc.bordering_zones)
+				into.windows |= wc.shared_windows
+				into.windows |= windows
+				wc.shared_windows.len = 0
+				windows.len = 0
+				for(var/zone/Z in wc.bordering_zones)
+					Z.window_connections -= wc
+				wc.bordering_zones.len = 0
+				qdel(wc)
+			//move the window connections to the new zone thats taken over
+			else
+				wc.bordering_zones -= src
+				wc.bordering_zones += into
+
 	for(var/turf/simulated/T in contents)
 		into.add(T)
 		#ifdef ZASDBG
